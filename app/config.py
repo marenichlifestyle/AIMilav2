@@ -19,6 +19,18 @@ def _to_int(name: str, default: int) -> int:
         return default
 
 
+def _to_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
 def _normalize_database_url(url: str) -> str:
     if url.startswith("postgresql+asyncpg://"):
         return url
@@ -35,6 +47,7 @@ class Settings:
     openai_api_key: str
     openai_model: str
     openai_transcribe_model: str
+    openai_enable_web_search: bool
     supabase_url: str
     supabase_service_role_key: str
     chatapp_default_license_id: str
@@ -69,6 +82,7 @@ def get_settings() -> Settings:
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
         openai_transcribe_model=os.getenv("OPENAI_TRANSCRIBE_MODEL", "whisper-1"),
+        openai_enable_web_search=_to_bool("OPENAI_ENABLE_WEB_SEARCH", True),
         supabase_url=os.getenv("SUPABASE_URL", "").rstrip("/"),
         supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""),
         chatapp_default_license_id=os.getenv("CHATAPP_DEFAULT_LICENSE_ID", "68179"),

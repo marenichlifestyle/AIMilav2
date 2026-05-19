@@ -51,6 +51,32 @@ def _is_client_safe_text(text: str) -> bool:
     return bool(text.strip()) and not is_technical_json_text(text)
 
 
+def _extract_url_citations(chunk: Any) -> list[str]:
+    annotations = _get_attr(chunk, "annotations", []) or []
+    urls: list[str] = []
+    for annotation in annotations:
+        if _get_attr(annotation, "type") != "url_citation":
+            continue
+        url = _get_attr(annotation, "url")
+        if isinstance(url, str) and url.strip():
+            urls.append(url.strip())
+    return urls
+
+
+def _append_citation_urls(text: str, urls: list[str]) -> str:
+    unique_urls = []
+    seen = set()
+    for url in urls:
+        if url in seen or url in text:
+            continue
+        seen.add(url)
+        unique_urls.append(url)
+
+    if not unique_urls:
+        return text.strip()
+    return f"{text.strip()}\n\nИсточники: " + ", ".join(unique_urls[:3])
+
+
 def _extract_text_from_response(response: dict[str, Any]) -> str:
     output_text = response.get("output_text")
     if isinstance(output_text, str) and _is_client_safe_text(output_text):
@@ -59,7 +85,7 @@ def _extract_text_from_response(response: dict[str, Any]) -> str:
         logger.warning("Discarded JSON-like OpenAI output_text before client send")
 
     output = response.get("output", []) or []
-    safe_text_chunks: list[str] = []
+    safe_text_chunks: list[tuple[str, list[str]]] = []
 
     for item in output:
         if _get_attr(item, "type") != "message":
@@ -74,9 +100,87 @@ def _extract_text_from_response(response: dict[str, Any]) -> str:
                 if is_technical_json_text(text_value):
                     logger.warning("Discarded JSON-like OpenAI message chunk before client send")
                     continue
-                safe_text_chunks.append(text_value.strip())
+                safe_text_chunks.append((text_value.strip(), _extract_url_citations(chunk)))
 
-    return safe_text_chunks[-1].strip() if safe_text_chunks else ""
+    if not safe_text_chunks:
+        return ""
+
+    final_text, citation_urls = safe_text_chunks[-1]
+    return _append_citation_urls(final_text, citation_urls)
+
+
+def _build_tools(enable_web_search: bool) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = [
+        {
+            "type": "function",
+            "name": "car_search",
+            "description": "Поиск автомобилей в базе Supabase по запросу клиента",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Оригинальный запрос клиента"},
+                    "criteria": {
+                        "type": "object",
+                        "properties": {
+                            "brand": {"type": "string"},
+                            "model": {"type": "string"},
+                            "year_min": {"type": "integer"},
+                            "year_max": {"type": "integer"},
+                            "budget_min": {"type": "integer"},
+                            "budget_max": {"type": "integer"},
+                            "mileage_max": {"type": "integer"},
+                            "color": {"type": "string"},
+                            "engine": {"type": "string"},
+                            "drive": {"type": "string"},
+                            "body_type": {"type": "string"},
+                            "power_min": {"type": "integer"},
+                            "must_have": {"type": "array", "items": {"type": "string"}},
+                            "nice_to_have": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "additionalProperties": True,
+                    },
+                },
+                "additionalProperties": True,
+            },
+        },
+        {
+            "type": "function",
+            "name": "get_manager",
+            "description": (
+                "Немедленно передать диалог ответственному менеджеру. "
+                "Вызывать обязательно, если клиент просит человека/менеджера/звонок; "
+                "готов купить, приехать, оплатить или просит встречу; "
+                "нужны точные расчёты, документы, VIN, договор, счёт, сроки; "
+                "обсуждается трейд-ин, выкуп, комиссия, обмен; "
+                "нет уверенного ответа, нет подходящего авто, пришёл неизвестный файл, "
+                "или есть жалоба/срочно/VIP."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["reason", "summary"],
+                "additionalProperties": True,
+            },
+        },
+    ]
+
+    if enable_web_search:
+        tools.append(
+            {
+                "type": "web_search",
+                "user_location": {
+                    "type": "approximate",
+                    "country": "RU",
+                    "city": "Moscow",
+                    "timezone": "Europe/Moscow",
+                },
+            }
+        )
+
+    return tools
 
 
 class OpenAIService:
@@ -180,62 +284,7 @@ class OpenAIService:
         if not self.ready:
             return "", previous_response_id
 
-        tools = [
-            {
-                "type": "function",
-                "name": "car_search",
-                "description": "Поиск автомобилей в базе Supabase по запросу клиента",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Оригинальный запрос клиента"},
-                        "criteria": {
-                            "type": "object",
-                            "properties": {
-                                "brand": {"type": "string"},
-                                "model": {"type": "string"},
-                                "year_min": {"type": "integer"},
-                                "year_max": {"type": "integer"},
-                                "budget_min": {"type": "integer"},
-                                "budget_max": {"type": "integer"},
-                                "mileage_max": {"type": "integer"},
-                                "color": {"type": "string"},
-                                "engine": {"type": "string"},
-                                "drive": {"type": "string"},
-                                "body_type": {"type": "string"},
-                                "power_min": {"type": "integer"},
-                                "must_have": {"type": "array", "items": {"type": "string"}},
-                                "nice_to_have": {"type": "array", "items": {"type": "string"}},
-                            },
-                            "additionalProperties": True,
-                        },
-                    },
-                    "additionalProperties": True,
-                },
-            },
-            {
-                "type": "function",
-                "name": "get_manager",
-                "description": (
-                    "Немедленно передать диалог ответственному менеджеру. "
-                    "Вызывать обязательно, если клиент просит человека/менеджера/звонок; "
-                    "готов купить, приехать, оплатить или просит встречу; "
-                    "нужны точные расчёты, документы, VIN, договор, счёт, сроки; "
-                    "обсуждается трейд-ин, выкуп, комиссия, обмен; "
-                    "нет уверенного ответа, нет подходящего авто, пришёл неизвестный файл, "
-                    "или есть жалоба/срочно/VIP."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "reason": {"type": "string"},
-                        "summary": {"type": "string"},
-                    },
-                    "required": ["reason", "summary"],
-                    "additionalProperties": True,
-                },
-            },
-        ]
+        tools = _build_tools(settings.openai_enable_web_search)
 
         input_messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -246,12 +295,24 @@ class OpenAIService:
             "model": settings.openai_model,
             "input": input_messages,
             "tools": tools,
+            "tool_choice": "auto",
             "store": True,
         }
+        if settings.openai_enable_web_search:
+            request_payload["include"] = ["web_search_call.action.sources"]
         if previous_response_id:
             request_payload["previous_response_id"] = previous_response_id
 
-        response = await self._post_responses(request_payload)
+        try:
+            response = await self._post_responses(request_payload)
+        except httpx.HTTPStatusError as exc:
+            if not settings.openai_enable_web_search:
+                raise
+            logger.error("OpenAI request with web_search failed, retrying without web_search: %s", exc)
+            tools = _build_tools(False)
+            request_payload["tools"] = tools
+            request_payload.pop("include", None)
+            response = await self._post_responses(request_payload)
         last_response_id = _get_attr(response, "id", previous_response_id)
 
         for _ in range(6):
@@ -291,14 +352,17 @@ class OpenAIService:
                     }
                 )
 
-            response = await self._post_responses(
-                {
-                    "model": settings.openai_model,
-                    "previous_response_id": _get_attr(response, "id", last_response_id),
-                    "input": tool_outputs,
-                    "store": True,
-                }
-            )
+            followup_payload: dict[str, Any] = {
+                "model": settings.openai_model,
+                "previous_response_id": _get_attr(response, "id", last_response_id),
+                "input": tool_outputs,
+                "tools": tools,
+                "tool_choice": "auto",
+                "store": True,
+            }
+            if settings.openai_enable_web_search:
+                followup_payload["include"] = ["web_search_call.action.sources"]
+            response = await self._post_responses(followup_payload)
             last_response_id = _get_attr(response, "id", last_response_id)
 
         final_text = _extract_text_from_response(response)

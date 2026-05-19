@@ -66,6 +66,7 @@ docker compose logs -f app
 ## Важные env
 - `OPENAI_MODEL=gpt-5.4-mini` (можно переключить на `gpt-5.5`)
 - `OPENAI_TRANSCRIBE_MODEL=whisper-1`
+- `OPENAI_ENABLE_WEB_SEARCH=true`
 - `CHATAPP_DEFAULT_LICENSE_ID=68179`
 - `CHATAPP_DEFAULT_MESSENGER=telegram`
 - `PROCESSING_DELAY_SECONDS=12`
