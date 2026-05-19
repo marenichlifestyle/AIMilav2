@@ -20,7 +20,13 @@ from app.telegram_client import TelegramClient
 configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="ChatApp Mila Replacement", version="1.0.0")
+app = FastAPI(
+    title="ChatApp Mila Replacement",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 supabase_repo = SupabaseRepo()
 openai_service = OpenAIService()
