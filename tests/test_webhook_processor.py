@@ -190,6 +190,40 @@ class WebhookHandoffTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(created_messages[0]["processed"])
         self.assertEqual(created_messages[0]["ignored_reason"], "non_client_or_echo")
 
+    async def test_chatapp_token_failure_escalation_does_not_pause_ai(self) -> None:
+        class FakeChatAppClient:
+            async def send_text_detailed(self, **kwargs):
+                return SimpleNamespace(
+                    success=False,
+                    status_code=403,
+                    error_code="ApiInvalidRefreshTokenError",
+                    retried=False,
+                    refresh_attempted=True,
+                    refresh_succeeded=False,
+                )
+
+        class FakeManagerService:
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def escalate(self, **kwargs):
+                self.calls.append(kwargs)
+                return {"ok": True}
+
+        manager_service = FakeManagerService()
+        processor = wp.WebhookProcessor(object(), object(), manager_service, FakeChatAppClient())
+        client = SimpleNamespace(chatapp_chat_id="chat-1", messenger_type="telegram")
+
+        result = await processor._send_text_to_chatapp_with_token_escalation(
+            session=object(),
+            client=client,
+            text="test",
+        )
+
+        self.assertFalse(result)
+        self.assertEqual(len(manager_service.calls), 1)
+        self.assertFalse(manager_service.calls[0]["pause_ai"])
+
 
 if __name__ == "__main__":
     unittest.main()

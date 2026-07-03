@@ -642,6 +642,7 @@ class WebhookProcessor:
                     "Не удалось обновить ChatApp access token через tokens.refresh. "
                     f"error_code={result.error_code or 'unknown'} status={result.status_code}"
                 ),
+                pause_ai=False,
             )
 
         return False
