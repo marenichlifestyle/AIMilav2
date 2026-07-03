@@ -175,9 +175,8 @@ def _message_has_file(file_in_message: Any, file_link: str) -> bool:
 
 def should_force_manager_escalation(text: str) -> bool:
     lower = text.lower()
-    triggers = [
+    direct_triggers = [
         "менеджер",
-        "человек",
         "позвон",
         "звонок",
         "приех",
@@ -198,7 +197,15 @@ def should_force_manager_escalation(text: str) -> bool:
         "срочно",
         "vip",
     ]
-    return any(token in lower for token in triggers)
+    if any(token in lower for token in direct_triggers):
+        return True
+
+    human_request_patterns = [
+        r"\b(дайте|позовите|подключите|переведите|нужен|нужна|хочу)\s+(?:живого\s+)?человека\b",
+        r"\b(?:связаться|поговорить|общаться)\s+с\s+(?:живым\s+)?человеком\b",
+        r"\bживой\s+(?:оператор|сотрудник|специалист|менеджер)\b",
+    ]
+    return any(re.search(pattern, lower) for pattern in human_request_patterns)
 
 
 class WebhookProcessor:

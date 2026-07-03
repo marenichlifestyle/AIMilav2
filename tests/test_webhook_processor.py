@@ -90,6 +90,14 @@ class ChatAppPayloadParsingTest(unittest.TestCase):
         self.assertTrue(wp.is_echo_of_recent_outgoing("Добрый день.\n\nТест", ["Добрый день. Тест"]))
         self.assertFalse(wp.is_echo_of_recent_outgoing("Новый вопрос", ["Добрый день. Тест"]))
 
+    def test_are_you_human_question_does_not_force_manager(self) -> None:
+        self.assertFalse(wp.should_force_manager_escalation("а вы человек?"))
+        self.assertFalse(wp.should_force_manager_escalation("Вы бот или человек?"))
+
+    def test_explicit_human_request_forces_manager(self) -> None:
+        self.assertTrue(wp.should_force_manager_escalation("хочу поговорить с живым человеком"))
+        self.assertTrue(wp.should_force_manager_escalation("позовите человека"))
+
 
 class _FakeSession:
     async def __aenter__(self):
