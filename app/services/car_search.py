@@ -43,6 +43,47 @@ def _as_lower(value: Any) -> str:
     return _as_text(value).lower()
 
 
+def _normalize_auto_text(value: Any) -> str:
+    text = _as_lower(value)
+    replacements = {
+        "ё": "е",
+        "—": "-",
+        "–": "-",
+        "‑": "-",
+        "класс": "class",
+        "гелик": "g class",
+        "гелика": "g class",
+        "гелики": "g class",
+        "геликам": "g class",
+        "гелендваген": "g class",
+        "гелендвагены": "g class",
+        "мерседес": "mercedes",
+        "мерседес-бенц": "mercedes-benz",
+        "бенц": "benz",
+    }
+    for src, dst in replacements.items():
+        text = text.replace(src, dst)
+    text = re.sub(r"\bг\s*(\d{2,3})\b", r"g \1", text)
+    text = re.sub(r"\bg\s*-?\s*(\d{2,3})\b", r"g \1", text)
+    text = re.sub(r"\bg\s*-?\s*class\b", "g class", text)
+    text = re.sub(r"[^a-zа-я0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _contains_normalized(haystack: Any, needle: Any) -> bool:
+    normalized_haystack = _normalize_auto_text(haystack)
+    normalized_needle = _normalize_auto_text(needle)
+    if not normalized_needle:
+        return False
+    if normalized_needle in normalized_haystack:
+        return True
+    if normalized_needle == "g class":
+        return "g class" in normalized_haystack or re.search(r"\bg\s+(?:63|400|450|500|550|580)\b", normalized_haystack) is not None
+    if normalized_needle in {"g 63", "g63"}:
+        return "g 63" in normalized_haystack or ("g class" in normalized_haystack and "63" in normalized_haystack)
+    return False
+
+
 def _as_int(value: Any) -> int | None:
     if value is None:
         return None
@@ -84,7 +125,13 @@ def _pick(row: dict[str, Any], canonical_key: str) -> Any:
 
 
 def _tokenize(text: str) -> list[str]:
-    return [t for t in re.findall(r"[\w\-]+", text.lower()) if len(t) > 1]
+    normalized = _normalize_auto_text(text)
+    tokens = [t for t in re.findall(r"[\w\-]+", normalized) if len(t) > 1]
+    if "g" in normalized.split() and "63" in normalized.split():
+        tokens.extend(["g", "63", "amg"])
+    if "g class" in normalized:
+        tokens.extend(["g", "class"])
+    return list(dict.fromkeys(tokens))
 
 
 def _normalize_string_list(value: Any) -> list[str]:
@@ -215,6 +262,8 @@ class CarSearchService:
             if parsed[key] in (None, "", []):
                 parsed[key] = value
 
+        self._normalize_known_model_criteria(parsed, query_text)
+
         if parsed["year_min"] and parsed["year_max"] and parsed["year_min"] > parsed["year_max"]:
             parsed["year_min"], parsed["year_max"] = parsed["year_max"], parsed["year_min"]
         if parsed["budget_min"] and parsed["budget_max"] and parsed["budget_min"] > parsed["budget_max"]:
@@ -222,9 +271,39 @@ class CarSearchService:
 
         return parsed
 
+    def _normalize_known_model_criteria(self, parsed: dict[str, Any], query_text: str) -> None:
+        combined = " ".join([query_text, _as_text(parsed.get("brand")), _as_text(parsed.get("model"))])
+        normalized = _normalize_auto_text(combined)
+
+        is_g_class = any(
+            marker in normalized
+            for marker in [
+                "g class",
+                "g 63",
+                "g63",
+            ]
+        )
+        if is_g_class:
+            if not _as_text(parsed.get("brand")):
+                parsed["brand"] = "Mercedes-Benz"
+            if "63" in normalized or "amg" in normalized:
+                parsed["model"] = "G-Класс AMG"
+                must_have = parsed.get("must_have") if isinstance(parsed.get("must_have"), list) else []
+                for token in ["63", "AMG"]:
+                    if token not in must_have:
+                        must_have.append(token)
+                parsed["must_have"] = must_have
+            elif not _as_text(parsed.get("model")) or _contains_normalized(parsed.get("model"), "g class"):
+                parsed["model"] = "G-Класс"
+
     def _extract_from_text(self, text: str) -> dict[str, Any]:
         result: dict[str, Any] = {}
         lower = text.lower()
+        normalized = _normalize_auto_text(text)
+
+        if "g class" in normalized or "g 63" in normalized or "g63" in normalized:
+            result["brand"] = "Mercedes-Benz"
+            result["model"] = "G-Класс AMG" if ("63" in normalized or "amg" in normalized) else "G-Класс"
 
         years = [int(v) for v in re.findall(r"\b(19\d{2}|20\d{2})\b", lower)]
         if len(years) >= 2:
@@ -348,11 +427,11 @@ class CarSearchService:
         brand = _as_lower(criteria.get("brand"))
         model = _as_lower(criteria.get("model"))
 
-        if brand and brand not in _as_lower(car.brand):
+        if brand and not _contains_normalized(car.brand, brand):
             return False
         if model:
-            model_hay = " ".join([car.model, car.pseudo_model, car.generation]).lower()
-            if model not in model_hay:
+            model_hay = " ".join([car.model, car.pseudo_model, car.generation])
+            if not _contains_normalized(model_hay, model):
                 return False
         return True
 
@@ -424,7 +503,8 @@ class CarSearchService:
                     car.description,
                     car.equipment,
                 ]
-            ).lower()
+            )
+            haystack = _normalize_auto_text(haystack)
             matches = sum(1 for token in query_tokens if token in haystack)
             if matches >= max(1, min(2, len(query_tokens))):
                 result.append(car)
@@ -441,16 +521,16 @@ class CarSearchService:
         body_type = _as_lower(criteria.get("body_type"))
 
         if brand:
-            if brand == _as_lower(car.brand):
+            if _normalize_auto_text(brand) == _normalize_auto_text(car.brand):
                 score += 0.22
-            elif brand in _as_lower(car.brand):
+            elif _contains_normalized(car.brand, brand):
                 score += 0.12
 
         if model:
-            model_hay = " ".join([car.model, car.pseudo_model, car.generation]).lower()
-            if model == car.model.lower():
+            model_hay = " ".join([car.model, car.pseudo_model, car.generation])
+            if _normalize_auto_text(model) == _normalize_auto_text(car.model):
                 score += 0.2
-            elif model in model_hay:
+            elif _contains_normalized(model_hay, model):
                 score += 0.12
 
         year_min = criteria.get("year_min")
@@ -496,17 +576,17 @@ class CarSearchService:
             else:
                 score -= 0.05
 
-        haystack = " ".join([car.description, car.equipment, car.generation, car.model, car.brand]).lower()
+        haystack = _normalize_auto_text(" ".join([car.description, car.equipment, car.generation, car.model, car.brand]))
         query_tokens = _tokenize(query_text)
         if query_tokens:
             overlap = sum(1 for token in query_tokens if token in haystack)
             score += min(overlap * 0.02, 0.1)
 
         for token in criteria.get("must_have", []):
-            if token and token.lower() in haystack:
+            if token and _normalize_auto_text(token) in haystack:
                 score += 0.03
         for token in criteria.get("nice_to_have", []):
-            if token and token.lower() in haystack:
+            if token and _normalize_auto_text(token) in haystack:
                 score += 0.015
 
         if car.url:
