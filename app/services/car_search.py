@@ -209,7 +209,7 @@ def _term_in_text(haystack: Any, needle: Any) -> bool:
     if normalized_needle == "g class":
         return "g class" in normalized_haystack or re.search(r"\bg\s*(?:63|400|450|500|550|580)\b", normalized_haystack) is not None
     if normalized_needle in {"g 63", "g63"}:
-        return "g 63" in normalized_haystack or "g63" in _compact_normalized(normalized_haystack)
+        return re.search(r"\bg\s*63\b", normalized_haystack) is not None
 
     needle_tokens = _normalized_tokens(normalized_needle)
     haystack_tokens = _normalized_tokens(normalized_haystack)
@@ -593,8 +593,7 @@ class CarSearchService:
 
         if best_model is not None:
             _, car, term = best_model
-            if not _as_text(parsed.get("brand")):
-                parsed["brand"] = car.brand
+            parsed["brand"] = car.brand
             if not _as_text(parsed.get("model")):
                 parsed["model"] = car.model
                 parsed["_strict_model"] = True

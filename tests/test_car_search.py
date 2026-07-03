@@ -28,6 +28,83 @@ TEST_ROWS = [
         "publicationDescription": "Пакет AMG Performance. Карбоновые элементы. Тормозная система AMG.",
     },
     {
+        "brand": "Mercedes-Benz",
+        "model": "SL-Класс AMG",
+        "pseudoModel": "SL-Класс AMG 63 AMG",
+        "modificationName": "63 AMG 4.0 AT (585 л.с.) 4WD",
+        "equipmentName": "AMG SL 63",
+        "year": 2022,
+        "saleStatus": "onsale",
+        "stockState": "in",
+        "sellingPrice": 17900000,
+        "dealerSitePublicationUrl": "https://millionmiles.ru/cars/mercedes-benz/sl-klass-amg/test",
+        "publicationDescription": "Тормозная система AMG с керамическими тормозными дисками.",
+    },
+    {
+        "brand": "Mercedes-Benz",
+        "model": "Maybach GLS",
+        "modificationName": "600 4.0 AT (558 л.с.) 4WD",
+        "equipmentName": "Maybach GLS 600",
+        "year": 2022,
+        "saleStatus": "onsale",
+        "stockState": "in",
+        "sellingPrice": 24500000,
+        "dealerSitePublicationUrl": "https://millionmiles.ru/cars/mercedes-benz/maybach-gls/test",
+        "publicationDescription": "Mercedes-Maybach GLS.",
+    },
+    {
+        "brand": "Mercedes-Benz",
+        "model": "GLS AMG",
+        "pseudoModel": "GLS-Класс AMG 63 AMG",
+        "modificationName": "63 AMG 4.0 AT (612 л.с.) 4WD",
+        "equipmentName": "AMG GLS 63",
+        "year": 2026,
+        "saleStatus": "onsale",
+        "stockState": "in",
+        "sellingPrice": 32250000,
+        "dealerSitePublicationUrl": "https://millionmiles.ru/cars/mercedes-benz/gls-amg/test",
+        "publicationDescription": "GLS AMG 63.",
+    },
+    {
+        "brand": "Mercedes-Benz",
+        "model": "Maybach S-Класс",
+        "pseudoModel": "S-Класс Maybach 680",
+        "modificationName": "680 6.0 AT (612 л.с.) 4WD",
+        "equipmentName": "Maybach S 680",
+        "year": 2024,
+        "saleStatus": "onsale",
+        "stockState": "in",
+        "sellingPrice": 33500000,
+        "dealerSitePublicationUrl": "https://millionmiles.ru/cars/mercedes-benz/maybach-s-klass/test",
+        "publicationDescription": "Mercedes-Maybach S 680.",
+    },
+    {
+        "brand": "Mercedes-Benz",
+        "model": "GLE Coupe AMG",
+        "pseudoModel": "GLE Coupe AMG 63 AMG S",
+        "modificationName": "63 AMG S 4.0 AT (612 л.с.) 4WD",
+        "equipmentName": "AMG GLE 63 S Coupe",
+        "year": 2025,
+        "saleStatus": "onsale",
+        "stockState": "in",
+        "sellingPrice": 24490000,
+        "dealerSitePublicationUrl": "https://millionmiles.ru/cars/mercedes-benz/gle-coupe-amg/test",
+        "publicationDescription": "GLE Coupe AMG 63 S.",
+    },
+    {
+        "brand": "Mercedes-Benz",
+        "model": "S-Класс AMG",
+        "pseudoModel": "S-Класс AMG 63 AMG Long",
+        "modificationName": "63 e AMG Long 4.0hyb AT (802 л.с.) 4WD",
+        "equipmentName": "AMG S 63 E Performance Long",
+        "year": 2024,
+        "saleStatus": "onsale",
+        "stockState": "in",
+        "sellingPrice": 28900000,
+        "dealerSitePublicationUrl": "https://millionmiles.ru/cars/mercedes-benz/s-klass-amg/test",
+        "publicationDescription": "S-Класс AMG 63 Long.",
+    },
+    {
         "brand": "Porsche",
         "model": "911",
         "pseudoModel": "911 Turbo S",
@@ -222,6 +299,33 @@ class CarSearchInventoryAwareTest(unittest.IsolatedAsyncioTestCase):
             result,
         )
         self.assertTrue(any(car["spec_highlights"] for car in result["cars"]), result)
+
+    async def test_amg_63_models_do_not_fall_into_g_class(self) -> None:
+        cases = {
+            "SL-Класс AMG 63 AMG": "SL-Класс AMG",
+            "GLS-Класс AMG 63 AMG": "GLS AMG",
+            "GLE Coupe AMG 63 AMG S": "GLE Coupe AMG",
+            "S-Класс AMG 63 AMG Long": "S-Класс AMG",
+        }
+
+        for query, expected_model in cases.items():
+            with self.subTest(query=query):
+                car = await self._top(query)
+                self.assertEqual(car["brand"], "Mercedes-Benz")
+                self.assertEqual(car["model"], expected_model)
+
+    async def test_maybach_models_keep_mercedes_brand_from_inventory(self) -> None:
+        cases = {
+            "Maybach GLS": "Maybach GLS",
+            "Maybach S-Класс": "Maybach S-Класс",
+            "S-Класс Maybach 680": "Maybach S-Класс",
+        }
+
+        for query, expected_model in cases.items():
+            with self.subTest(query=query):
+                car = await self._top(query)
+                self.assertEqual(car["brand"], "Mercedes-Benz")
+                self.assertEqual(car["model"], expected_model)
 
 
 if __name__ == "__main__":
