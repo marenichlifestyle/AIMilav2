@@ -12,6 +12,7 @@
 - Использует OpenAI Responses API с `previous_response_id`
 - Ищет авто в Supabase `public."CMExpert"` через `car_search`
 - Эскалирует менеджеру в Telegram через `get_manager`
+- Отключает AI после передачи менеджеру (`manager_handoff`), чтобы бот не вклинивался в живой диалог
 - Отправляет ответ в ChatApp API
 - Никогда не роняет webhook наружу 500 (возвращает 200 OK)
 
@@ -63,6 +64,19 @@ http://localhost:8000/webhook/chatapp
 docker compose logs -f app
 ```
 
+## 7) Ручное управление AI после передачи менеджеру
+После `get_manager` клиент переводится в `manager_handoff`: новые сообщения сохраняются в `messages`, но AI их не обрабатывает и не отвечает клиенту.
+
+Вернуть AI в диалог можно только вручную:
+```bash
+docker compose exec app python -m app.admin resume-client --chat-id "private-..." --clear-context
+```
+
+Отключить AI вручную:
+```bash
+docker compose exec app python -m app.admin pause-client --chat-id "private-..." --reason "Диалог ведет менеджер"
+```
+
 ## Важные env
 - `OPENAI_MODEL=gpt-5.4-mini` (можно переключить на `gpt-5.5`)
 - `OPENAI_TRANSCRIBE_MODEL=whisper-1`
@@ -77,6 +91,11 @@ docker compose logs -f app
 - `clients`
 - `messages`
 - `manager_escalations`
+
+Ключевые поля:
+- `clients.ai_state`: `active` или `manager_handoff`
+- `clients.ai_paused_reason`: причина отключения AI
+- `messages.ignored_reason`: почему webhook сохранён, но не обработан AI
 
 ## Поведение при ошибках
 - Любые ошибки OpenAI/Supabase/ChatApp/Telegram логируются

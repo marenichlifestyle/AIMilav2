@@ -23,6 +23,7 @@ class ManagerService:
         client: Client,
         reason: str,
         summary: str,
+        pause_ai: bool = True,
     ) -> dict:
         safe_reason = (reason or "Требуется помощь менеджера").strip()
         safe_summary = (summary or "Нет подробного описания").strip()
@@ -33,6 +34,12 @@ class ManagerService:
             reason=safe_reason,
             summary=safe_summary,
         )
+        if pause_ai:
+            await repositories.pause_client_ai(session=session, client_id=client.id, reason=safe_reason)
+            client.ai_state = repositories.AI_STATE_MANAGER_HANDOFF
+            client.ai_paused_reason = safe_reason
+            client.last_openai_response_id = None
+            client.processing = False
 
         dialog_link = (
             f"https://dialogs.pro/dialogs/{settings.chatapp_default_license_id}/"

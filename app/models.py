@@ -22,6 +22,9 @@ class Client(Base):
     messenger_type: Mapped[str] = mapped_column(String(50), default="telegram", nullable=False)
     last_openai_response_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     processing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ai_state: Mapped[str] = mapped_column(String(40), default="active", server_default="active", nullable=False)
+    ai_paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ai_paused_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -44,6 +47,7 @@ class Message(Base):
     file_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     processed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    ignored_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     client: Mapped[Client] = relationship(back_populates="messages")

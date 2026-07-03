@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -19,12 +20,27 @@ from app.services.media import detect_file_type, download_media
 
 logger = logging.getLogger(__name__)
 TECHNICAL_JSON_FALLBACK_TEXT = "Передам вопрос ответственному менеджеру, он даст точный ответ по наличию и условиям."
+OWN_IDENTITY_MARKERS = {
+    "millionmilesmila",
+    "million miles | менеджер",
+    "million miles менеджер",
+}
+TEXT_CANDIDATE_KEYS = ["message", "text", "caption", "file_or_message", "fileOrMessage"]
+URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 
 
 def _clean_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _normalize_for_compare(value: str) -> str:
+    return re.sub(r"\s+", " ", value or "").strip().lower()
+
+
+def _looks_like_url(value: str) -> bool:
+    return bool(URL_RE.match((value or "").strip()))
 
 
 def _safe_get(payload: dict[str, Any], keys: list[str]) -> Any:
@@ -34,6 +50,41 @@ def _safe_get(payload: dict[str, Any], keys: list[str]) -> Any:
     return None
 
 
+def _collect_message_text(source: dict[str, Any]) -> tuple[str, list[str]]:
+    values: list[tuple[str, str]] = []
+    for key in TEXT_CANDIDATE_KEYS:
+        raw = source.get(key)
+        text = _clean_text(raw)
+        if not text or _looks_like_url(text):
+            continue
+        values.append((key, text))
+
+    selected: list[tuple[str, str]] = []
+    normalized_seen: set[str] = set()
+    for key, text in sorted(values, key=lambda item: len(item[1]), reverse=True):
+        normalized = _normalize_for_compare(text)
+        if not normalized or normalized in normalized_seen:
+            continue
+        if any(normalized in _normalize_for_compare(existing_text) for _, existing_text in selected):
+            continue
+        selected.append((key, text))
+        normalized_seen.add(normalized)
+
+    selected.reverse()
+    return "\n".join(text for _, text in selected).strip(), [key for key, _ in selected]
+
+
+def _extract_file_link(source: dict[str, Any]) -> str:
+    direct = _clean_text(_safe_get(source, ["file_link", "fileLink", "file_url", "fileUrl", "url"]))
+    if direct:
+        return direct
+    for key in ["file_or_message", "fileOrMessage"]:
+        value = _clean_text(source.get(key))
+        if _looks_like_url(value):
+            return value
+    return ""
+
+
 def extract_chatapp_payload(payload: dict[str, Any]) -> dict[str, Any]:
     source = payload.get("body") if isinstance(payload.get("body"), dict) else payload
 
@@ -41,10 +92,10 @@ def extract_chatapp_payload(payload: dict[str, Any]) -> dict[str, Any]:
     id_chat = _safe_get(source, ["id_chat", "idChat", "chat_id", "chatId"])
     username = _safe_get(source, ["username", "userName", "login"])
     name = _safe_get(source, ["name", "full_name", "fullName"])
-    message = _safe_get(source, ["message", "text", "caption", "file_or_message", "fileOrMessage"])
+    message, message_fields = _collect_message_text(source)
     dt = _safe_get(source, ["datetime", "date", "timestamp", "time"])
     file_in_message = _safe_get(source, ["file_in_message", "fileInMessage", "has_file", "hasFile"])
-    file_link = _safe_get(source, ["file_link", "fileLink", "file_url", "fileUrl", "url"])
+    file_link = _extract_file_link(source)
     messenger_type = _safe_get(source, ["messenger_type", "messenger", "messengerType"])
     license_id = _safe_get(source, ["license_id", "license", "licenseId"])
 
@@ -53,10 +104,12 @@ def extract_chatapp_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "id_chat": _clean_text(id_chat),
         "username": _clean_text(username) or None,
         "name": _clean_text(name) or None,
-        "message": _clean_text(message),
+        "name_chat": _clean_text(_safe_get(source, ["name_chat", "nameChat"])) or None,
+        "message": message,
+        "message_fields": message_fields,
         "datetime": _clean_text(dt),
         "file_in_message": file_in_message,
-        "file_link": _clean_text(file_link),
+        "file_link": file_link,
         "messenger_type": _clean_text(messenger_type) or settings.chatapp_default_messenger,
         "license_id": _clean_text(license_id) or settings.chatapp_default_license_id,
         "source_payload": source if isinstance(source, dict) else payload,
@@ -78,6 +131,37 @@ def is_client_sender(sender: Any) -> bool:
         return False
 
     return True
+
+
+def has_own_identity(parsed: dict[str, Any]) -> bool:
+    values = [
+        parsed.get("username"),
+        parsed.get("name"),
+        parsed.get("name_chat"),
+    ]
+    for value in values:
+        normalized = _normalize_for_compare(str(value or "")).replace("@", "")
+        if not normalized:
+            continue
+        compact = normalized.replace(" ", "")
+        if normalized in OWN_IDENTITY_MARKERS or compact in OWN_IDENTITY_MARKERS:
+            return True
+        if "millionmilesmila" in compact:
+            return True
+        if "million miles" in normalized and "менеджер" in normalized:
+            return True
+    return False
+
+
+def is_echo_of_recent_outgoing(text: str, recent_outgoing_texts: list[str]) -> bool:
+    normalized_text = _normalize_for_compare(text)
+    if not normalized_text:
+        return False
+    for outgoing in recent_outgoing_texts:
+        normalized_outgoing = _normalize_for_compare(outgoing)
+        if normalized_outgoing and normalized_text == normalized_outgoing:
+            return True
+    return False
 
 
 def _message_has_file(file_in_message: Any, file_link: str) -> bool:
@@ -139,28 +223,44 @@ class WebhookProcessor:
                 return
 
             sender = parsed.get("sender")
-            if not is_client_sender(sender):
-                logger.info("Ignored non-client sender for chat_id=%s sender=%s", chat_id, sender)
-                return
+            sender_is_client = is_client_sender(sender)
+            own_identity = has_own_identity(parsed)
 
             message_has_file = _message_has_file(parsed.get("file_in_message"), parsed.get("file_link", ""))
             file_type = detect_file_type(parsed.get("file_link"), parsed.get("source_payload")) if message_has_file else "text"
             if message_has_file and file_type == "text":
                 file_type = "other_file"
 
-            logger.info("Incoming webhook chat_id=%s type=%s", chat_id, file_type)
+            logger.info(
+                "Incoming webhook chat_id=%s type=%s text_fields=%s",
+                chat_id,
+                file_type,
+                parsed.get("message_fields") or [],
+            )
 
             client_id: uuid.UUID | None = None
             acquired = False
 
             async with SessionLocal() as session:
+                should_update_profile = sender_is_client and not own_identity
                 client = await repositories.get_or_create_client(
                     session=session,
                     chatapp_chat_id=chat_id,
-                    username=parsed.get("username"),
-                    name=parsed.get("name"),
+                    username=parsed.get("username") if should_update_profile else None,
+                    name=parsed.get("name") if should_update_profile else None,
                     messenger_type=parsed.get("messenger_type") or settings.chatapp_default_messenger,
                 )
+
+                ignored_reason = None
+                if not sender_is_client or own_identity:
+                    ignored_reason = "non_client_or_echo"
+                elif is_echo_of_recent_outgoing(
+                    parsed.get("message") or "",
+                    await repositories.get_recent_outgoing_texts(session, client.id),
+                ):
+                    ignored_reason = "non_client_or_echo"
+                elif client.ai_state == repositories.AI_STATE_MANAGER_HANDOFF:
+                    ignored_reason = "manager_handoff"
 
                 await repositories.create_message(
                     session=session,
@@ -170,12 +270,25 @@ class WebhookProcessor:
                     file_url=parsed.get("file_link") or None,
                     file_type=file_type,
                     raw_payload=payload,
-                    processed=False,
+                    processed=ignored_reason is not None,
+                    ignored_reason=ignored_reason,
                 )
 
-                await session.commit()
                 client_id = client.id
 
+                if ignored_reason is not None:
+                    await session.commit()
+                    logger.info(
+                        "Ignored webhook after save client_id=%s chat_id=%s reason=%s ai_state=%s sender=%s",
+                        client.id,
+                        chat_id,
+                        ignored_reason,
+                        client.ai_state,
+                        sender,
+                    )
+                    return
+
+                await session.commit()
                 acquired = await repositories.try_acquire_processing(session, client.id)
                 await session.commit()
 
@@ -430,6 +543,8 @@ class WebhookProcessor:
         )
 
         await repositories.mark_messages_processed(session, batch_message_ids)
+        if client.ai_state == repositories.AI_STATE_MANAGER_HANDOFF:
+            new_response_id = None
         await repositories.set_client_last_response_id(session, client_id, new_response_id)
 
     async def _ensure_client_safe_generated_text(

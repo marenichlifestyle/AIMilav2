@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Client, ManagerEscalation, Message
 
 
+AI_STATE_ACTIVE = "active"
+AI_STATE_MANAGER_HANDOFF = "manager_handoff"
+
+
 async def get_or_create_client(
     session: AsyncSession,
     chatapp_chat_id: str,
@@ -49,6 +53,7 @@ async def create_message(
     file_type: str | None,
     raw_payload: dict[str, Any] | None,
     processed: bool,
+    ignored_reason: str | None = None,
 ) -> Message:
     message = Message(
         client_id=client_id,
@@ -58,6 +63,7 @@ async def create_message(
         file_type=file_type,
         raw_payload=raw_payload,
         processed=processed,
+        ignored_reason=ignored_reason,
     )
     session.add(message)
     await session.flush()
@@ -67,7 +73,7 @@ async def create_message(
 async def try_acquire_processing(session: AsyncSession, client_id: uuid.UUID) -> bool:
     stmt = (
         update(Client)
-        .where(and_(Client.id == client_id, Client.processing.is_(False)))
+        .where(and_(Client.id == client_id, Client.processing.is_(False), Client.ai_state == AI_STATE_ACTIVE))
         .values(processing=True, updated_at=func.now())
         .returning(Client.id)
     )
@@ -124,8 +130,53 @@ async def set_client_last_response_id(
     await session.execute(stmt)
 
 
+async def pause_client_ai(
+    session: AsyncSession,
+    client_id: uuid.UUID,
+    reason: str,
+) -> None:
+    stmt = (
+        update(Client)
+        .where(Client.id == client_id)
+        .values(
+            ai_state=AI_STATE_MANAGER_HANDOFF,
+            ai_paused_at=func.now(),
+            ai_paused_reason=(reason or "Передан менеджеру").strip(),
+            last_openai_response_id=None,
+            processing=False,
+            updated_at=func.now(),
+        )
+    )
+    await session.execute(stmt)
+
+
+async def resume_client_ai(
+    session: AsyncSession,
+    client_id: uuid.UUID,
+    clear_context: bool = True,
+) -> None:
+    values: dict[str, Any] = {
+        "ai_state": AI_STATE_ACTIVE,
+        "ai_paused_at": None,
+        "ai_paused_reason": None,
+        "processing": False,
+        "updated_at": func.now(),
+    }
+    if clear_context:
+        values["last_openai_response_id"] = None
+
+    stmt = update(Client).where(Client.id == client_id).values(**values)
+    await session.execute(stmt)
+
+
 async def get_client_by_id(session: AsyncSession, client_id: uuid.UUID) -> Client | None:
     query = select(Client).where(Client.id == client_id).limit(1)
+    result = await session.execute(query)
+    return result.scalar_one_or_none()
+
+
+async def get_client_by_chat_id(session: AsyncSession, chatapp_chat_id: str) -> Client | None:
+    query = select(Client).where(Client.chatapp_chat_id == chatapp_chat_id).limit(1)
     result = await session.execute(query)
     return result.scalar_one_or_none()
 
@@ -144,6 +195,27 @@ async def get_unprocessed_incoming_messages(session: AsyncSession, client_id: uu
     )
     result = await session.execute(query)
     return list(result.scalars().all())
+
+
+async def get_recent_outgoing_texts(
+    session: AsyncSession,
+    client_id: uuid.UUID,
+    limit: int = 5,
+) -> list[str]:
+    query = (
+        select(Message.text)
+        .where(
+            and_(
+                Message.client_id == client_id,
+                Message.direction == "outgoing",
+                Message.text.is_not(None),
+            )
+        )
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(query)
+    return [str(text) for text in result.scalars().all() if text]
 
 
 async def mark_messages_processed(session: AsyncSession, message_ids: list[uuid.UUID]) -> None:
