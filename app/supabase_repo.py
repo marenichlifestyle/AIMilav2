@@ -398,6 +398,103 @@ class SupabaseRepo:
 
         return token, None
 
+    async def make_chatapp_tokens(self, current_token: ChatAppToken) -> tuple[ChatAppToken | None, str | None]:
+        email = _clean_text(settings.chatapp_auth_email)
+        password = _clean_text(settings.chatapp_auth_password)
+        app_id = _clean_text(settings.chatapp_app_id)
+
+        if not settings.chatapp_enable_tokens_make_fallback:
+            logger.error("ChatApp tokens.make fallback is disabled")
+            return None, "tokens_make_disabled"
+        if not email or not password or not app_id:
+            logger.error(
+                "Cannot call ChatApp tokens.make: credentials are incomplete email_set=%s password_set=%s app_id_set=%s",
+                bool(email),
+                bool(password),
+                bool(app_id),
+            )
+            return None, "tokens_make_credentials_missing"
+
+        make_url = "https://api.chatapp.online/v1/tokens"
+        headers = {
+            "Lang": "ru",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        body = {
+            "email": email,
+            "password": password,
+            "appId": app_id,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.post(make_url, headers=headers, json=body)
+        except Exception as exc:
+            logger.error("ChatApp tokens.make request failed: %s", exc)
+            return None, "tokens_make_request_failed"
+
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = {}
+
+        if resp.status_code >= 400:
+            error_code = None
+            if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+                error_code = payload["error"].get("code")
+            logger.error("ChatApp tokens.make failed: status=%s error_code=%s", resp.status_code, error_code)
+            return None, str(error_code or "tokens_make_http_error")
+
+        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+        if not isinstance(data, dict):
+            logger.error("ChatApp tokens.make returned invalid payload")
+            return None, "tokens_make_invalid_payload"
+
+        new_access = _clean_text(
+            data.get("accessToken")
+            or data.get("access_token")
+            or data.get("token")
+        )
+        new_refresh = _clean_text(
+            data.get("refreshToken")
+            or data.get("refresh_token")
+        )
+        access_end = data.get("accessTokenEndTime") or data.get("access_token_end_time")
+        refresh_end = data.get("refreshTokenEndTime") or data.get("refresh_token_end_time")
+
+        if not new_access or not new_refresh:
+            logger.error(
+                "ChatApp tokens.make returned incomplete tokens access_len=%s refresh_present=%s",
+                len(new_access),
+                bool(new_refresh),
+            )
+            return None, "tokens_make_incomplete_tokens"
+
+        updated = await self.update_chatapp_tokens(
+            current_token=current_token,
+            new_access_token=new_access,
+            new_refresh_token=new_refresh,
+            access_token_end_time=access_end,
+            refresh_token_end_time=refresh_end,
+        )
+        if not updated:
+            return None, "supabase_update_failed"
+
+        logger.info(
+            "ChatApp tokens.make succeeded and saved token_len=%s refresh_len=%s has_access_end=%s has_refresh_end=%s",
+            len(new_access),
+            len(new_refresh),
+            access_end not in (None, ""),
+            refresh_end not in (None, ""),
+        )
+
+        token = await self.get_chatapp_token()
+        if token is None:
+            return None, "supabase_reload_failed"
+
+        return token, None
+
     async def search_cars_raw(self, filters: dict[str, Any]) -> list[dict[str, Any]]:
         def _build_params(include_status: bool, include_numeric: bool, include_brand_model: bool) -> list[tuple[str, str]]:
             params: list[tuple[str, str]] = [("select", "*"), ("limit", "700")]

@@ -83,8 +83,16 @@ docker compose exec app python -m app.admin pause-client --chat-id "private-..."
 - `OPENAI_ENABLE_WEB_SEARCH=true`
 - `CHATAPP_DEFAULT_LICENSE_ID=68179`
 - `CHATAPP_DEFAULT_MESSENGER=telegram`
+- `CHATAPP_APP_ID=` нужен для аварийного получения новой пары ChatApp токенов через `tokens.make`
+- `CHATAPP_AUTH_EMAIL=` и `CHATAPP_AUTH_PASSWORD=` нужны только для fallback, если умер и accessToken, и refreshToken
+- `CHATAPP_ENABLE_TOKENS_MAKE_FALLBACK=true`
 - `PROCESSING_DELAY_SECONDS=12`
 - `MAX_MEDIA_MB=20`
+
+ChatApp token flow:
+- обычно сервис берёт `accessToken` / `refreshToken` из Supabase `public."ChatApp Token"`;
+- при `ApiInvalidTokenError` вызывает `tokens.refresh`, сохраняет новую пару в Supabase и повторяет отправку;
+- если refreshToken тоже невалиден, один раз вызывает `tokens.make` по email/password/appId, сохраняет новую пару и повторяет отправку.
 
 ## Таблицы
 Таблицы создаются автоматически при старте приложения:

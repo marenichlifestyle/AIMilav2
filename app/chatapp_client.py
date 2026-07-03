@@ -159,19 +159,32 @@ class ChatAppClient:
             refreshed_token, refresh_error = await self.supabase_repo.refresh_chatapp_tokens(token)
             if refreshed_token is None:
                 logger.error("ChatApp tokens.refresh failed: %s", refresh_error)
-                return ChatAppSendResult(
-                    success=False,
-                    status_code=first_response.status_code,
-                    error_code=refresh_error or first_error_code,
-                    refresh_attempted=True,
-                    refresh_succeeded=False,
-                    retried=False,
-                    token_source_column=token.access_column,
-                    has_refresh_token=refresh_present,
-                    access_token_len=len(access_token),
-                    license_id=license_value,
-                    messenger_type=messenger,
-                )
+                make_token: ChatAppToken | None = None
+                make_error: str | None = None
+                if refresh_error in {
+                    "ApiInvalidRefreshTokenError",
+                    "ApiInvalidTokenError",
+                    "refresh_token_missing",
+                }:
+                    logger.warning("ChatApp refresh token is invalid; attempting tokens.make fallback")
+                    make_token, make_error = await self.supabase_repo.make_chatapp_tokens(token)
+
+                if make_token is None:
+                    return ChatAppSendResult(
+                        success=False,
+                        status_code=first_response.status_code,
+                        error_code=make_error or refresh_error or first_error_code,
+                        refresh_attempted=True,
+                        refresh_succeeded=False,
+                        retried=False,
+                        token_source_column=token.access_column,
+                        has_refresh_token=refresh_present,
+                        access_token_len=len(access_token),
+                        license_id=license_value,
+                        messenger_type=messenger,
+                    )
+
+                refreshed_token = make_token
 
             new_access = _normalize_access_token(refreshed_token.access_token)
             try:

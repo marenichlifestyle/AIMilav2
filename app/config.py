@@ -54,6 +54,10 @@ class Settings:
     chatapp_default_messenger: str
     chatapp_token_table: str
     chatapp_cars_table: str
+    chatapp_auth_email: str
+    chatapp_auth_password: str
+    chatapp_app_id: str
+    chatapp_enable_tokens_make_fallback: bool
     telegram_bot_token: str
     telegram_manager_chat_id: str
     webhook_path: str
@@ -89,6 +93,10 @@ def get_settings() -> Settings:
         chatapp_default_messenger=os.getenv("CHATAPP_DEFAULT_MESSENGER", "telegram"),
         chatapp_token_table=os.getenv("CHATAPP_TOKEN_TABLE", "ChatApp Token"),
         chatapp_cars_table=os.getenv("CHATAPP_CARS_TABLE", "CMExpert"),
+        chatapp_auth_email=os.getenv("CHATAPP_AUTH_EMAIL", ""),
+        chatapp_auth_password=os.getenv("CHATAPP_AUTH_PASSWORD", ""),
+        chatapp_app_id=os.getenv("CHATAPP_APP_ID", ""),
+        chatapp_enable_tokens_make_fallback=_to_bool("CHATAPP_ENABLE_TOKENS_MAKE_FALLBACK", True),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_manager_chat_id=os.getenv("TELEGRAM_MANAGER_CHAT_ID", "-4629820633"),
         webhook_path=webhook_path,
