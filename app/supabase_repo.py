@@ -496,19 +496,16 @@ class SupabaseRepo:
         return token, None
 
     async def search_cars_raw(self, filters: dict[str, Any]) -> list[dict[str, Any]]:
-        def _build_params(include_status: bool, include_numeric: bool, include_brand_model: bool) -> list[tuple[str, str]]:
+        def _build_params(include_status: bool, include_numeric: bool, include_brand: bool) -> list[tuple[str, str]]:
             params: list[tuple[str, str]] = [("select", "*"), ("limit", "700")]
 
             if include_status:
                 params.append(("saleStatus", "eq.onsale"))
 
-            if include_brand_model:
+            if include_brand:
                 brand = _clean_text(filters.get("brand"))
-                model = _clean_text(filters.get("model"))
                 if brand:
                     params.append(("brand", f"ilike.*{brand}*"))
-                if model:
-                    params.append(("model", f"ilike.*{model}*"))
 
             if include_numeric:
                 if filters.get("year_min") is not None:
@@ -527,9 +524,10 @@ class SupabaseRepo:
             return params
 
         attempts = [
-            _build_params(include_status=True, include_numeric=True, include_brand_model=True),
-            _build_params(include_status=False, include_numeric=True, include_brand_model=True),
-            _build_params(include_status=False, include_numeric=False, include_brand_model=True),
+            _build_params(include_status=True, include_numeric=True, include_brand=True),
+            _build_params(include_status=True, include_numeric=False, include_brand=True),
+            _build_params(include_status=True, include_numeric=True, include_brand=False),
+            [("select", "*"), ("saleStatus", "eq.onsale"), ("limit", "700")],
             [("select", "*"), ("limit", "700")],
         ]
 

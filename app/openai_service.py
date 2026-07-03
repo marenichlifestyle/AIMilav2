@@ -114,11 +114,18 @@ def _build_tools(enable_web_search: bool) -> list[dict[str, Any]]:
         {
             "type": "function",
             "name": "car_search",
-            "description": "Поиск автомобилей в базе Supabase по запросу клиента",
+            "description": (
+                "Строгий поиск автомобилей в актуальной базе Million Miles/Supabase. "
+                "Использовать для любых вопросов о наличии, цене, ссылке, комплектации, модификации, "
+                "опциях, тормозах, аудиосистеме, подвеске и характеристиках конкретных автомобилей. "
+                "Не придумывать авто, цены или ссылки: клиенту можно показывать только данные из результата. "
+                "Web-search допустим только для общего рыночного/технического контекста модели, "
+                "но не как источник наличия Million Miles."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Оригинальный запрос клиента"},
+                    "query": {"type": "string", "description": "Оригинальный полный запрос клиента без сокращения"},
                     "criteria": {
                         "type": "object",
                         "properties": {
@@ -134,8 +141,21 @@ def _build_tools(enable_web_search: bool) -> list[dict[str, Any]]:
                             "drive": {"type": "string"},
                             "body_type": {"type": "string"},
                             "power_min": {"type": "integer"},
-                            "must_have": {"type": "array", "items": {"type": "string"}},
-                            "nice_to_have": {"type": "array", "items": {"type": "string"}},
+                            "must_have": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Обязательные модификации/опции: Turbo, GTS, Brabus, ceramic brakes, Burmester, massage и т.д.",
+                            },
+                            "nice_to_have": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Желательные, но не обязательные опции или характеристики",
+                            },
+                            "feature_terms": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Ключевые признаки комплектации/опций, например brakes, ceramic, carbon, burmester, massage, ventilation",
+                            },
                         },
                         "additionalProperties": True,
                     },
